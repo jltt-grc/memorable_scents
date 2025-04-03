@@ -1,0 +1,1539 @@
+---
+title: "📊 Statistical Analysis  "
+output:
+  html_document: 
+    code_folding: show
+    toc: yes
+    toc_depth: 5
+    toc_float: yes
+    fig_width: 9
+    fig_height: 6
+---
+
+```{r setup, include=FALSE}
+# To show or hide the code in html
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, include=FALSE}
+# Data manip
+library(dplyr)
+library(broom)
+library(tidyr)
+library(readr)
+library(tibble)
+library(mgsub)
+library(tidyverse)
+library(DT)
+library(sjPlot)
+
+# Stats
+library(glmmTMB)
+library(lmerTest)
+library(lme4)
+library(MuMIn)
+library(rstatix)
+
+# Data viz
+library(gridExtra)
+library(kableExtra)
+library(knitr)
+library(ggplot2)
+library(ggpubr)
+```
+
+# 🎯 Objective  
+This RMarkdown file is designed to perform statistical analyses of the dataset.  
+It includes steps such as importing the dataset, selecting conditions, analyzing variable distributions, and examining statistical relationships between tha variables.  
+
+The analysis can focus on one of two conditions:  
+- **Odor Recognition**  
+- **Associative Memory**  
+
+📌 **Important:** The condition selection is done in the step **[Condition Selection](#condition-selection)**, where the user must specify the appropriate condition before proceeding with the analysis.  
+
+# 📑 Table of Contents  
+
+- **[Import the Dataset](#import-the-dataset)**  
+  - *Load the dataset for analysis.*  
+  - [Dataset by Trial](#dataset-by-trial) – *Explore the dataset at the trial level.*  
+  - [Dataset by Subject](#dataset-by-subject) – *Aggregate data at the participant level.*  
+  - [Condition Selection](#condition-selection) – *Choose the condition of interest for the analysis.*  
+  - [Variable Distribution](#variable-distribution) – *Visualize the distribution of key variables.*  
+- **[Perceptual Scores](#perceptual-scores)**  
+  *Analyze perceptual-related measures across conditions.*  
+- **[Gender × Memory Scores](#gender-memory-scores)**  
+  *Examine how memory scores vary across genders.*  
+- **[Gender × Features](#gender-features)**  
+  *Explore relationships between gender and all the features.*  
+- **[Memory Score × Features](#memory-score-features)**  
+  *Assess the statistical effect of each independent feature on memory scores.* 
+
+# Import the dataset
+
+```{r loading}
+# Get the parent directory of the current working directory
+project_dir <- dirname(dirname(getwd()))
+
+# Define the path to the data folder
+data_folder <- file.path(project_dir, "FINAL/data")
+
+# Define the path to the CSV file
+file_path <- file.path(data_folder, "dataset.csv")
+
+# Read the CSV file
+df <- read.csv(file_path)
+```
+
+```{r preprocessing}
+# Separate pleasantness into unpleasant and pleasant
+df$unpleasant <- ifelse(
+  df$pleasantness >= -5 & df$pleasantness <= 0,
+  df$pleasantness,
+  NA
+                        )
+
+df$pleasant <- ifelse(
+  df$pleasantness >= 0 & df$pleasantness <= 5,
+  df$pleasantness,
+  NA
+                      )
+
+# Reorder columns
+col_order <- c(
+  'study', 'participant', 'gender', 'gender_encoded',
+  'pres_order', 'odor_num', 'odor_name', 'is_target', 'day',
+  'hit', 'cr', 'www', 'wwhich','mem',
+  'pleasantness', 'unpleasant', 'pleasant',
+  'emotional_strength', 'intensity', 'familiarity',
+  'avg_distance_target', 'avg_distance_hit',
+  "descriptors", "tokens", "lemma",
+  "nb_words",
+  "mean_lemma_jaccard_target", "mean_lemma_jaccard_hit"
+  )
+
+# Select col
+df_all <- df %>% select(all_of(col_order))
+
+# Subset df in target odors
+df_target <- filter(df, is_target == 1)
+
+# Subset df in hit odors
+df_hit <- filter(df_target, hit == 1)
+```
+
+## Dataset by trial
+
+```{r display df}
+# Display df
+datatable(
+  df_all,
+  options = list(
+    scrollX = TRUE,
+    scrollY = "400px"
+    )
+  )
+```
+
+```{r stats summary}
+# Define the columns to include
+selected_cols_all <- c(
+  'pleasantness',
+  'emotional_strength',
+  'intensity',
+  'familiarity',
+  "nb_words"
+)
+
+# Function to compute mean and standard deviation for selected columns
+summary_stats <- function(df, cols) {
+  df %>%
+    select(all_of(cols)) %>%
+    summarise(
+      across(everything(),
+             list(
+               mean = ~mean(.x, na.rm = TRUE),
+               sd = ~sd(.x, na.rm = TRUE)
+               )
+             )
+      ) %>%
+    pivot_longer(
+      everything(),
+      names_to = c("variable", ".value"),
+      names_pattern = "(.+)_(mean|sd)$"
+      )
+}
+
+# Compute statistics for each dataset
+stats_all <- summary_stats(
+  df_all,
+  selected_cols_all
+  ) %>%
+  mutate(group = "df_all")
+
+stats_target <- summary_stats(
+  df_target, 
+  c(selected_cols_all,
+    intersect(c(
+      'hit',
+      'avg_distance_target',
+      'mean_lemma_jaccard_target'
+      ),
+      names(df)
+              )
+    )
+) %>%
+  mutate(group = "df_target")
+
+stats_hit <- summary_stats(
+  df_hit, 
+  c(selected_cols_all,
+    intersect(c(
+      'www',
+      'wwhich',
+      'mem',
+      'avg_distance_hit',
+      'mean_lemma_jaccard_hit'),
+      names(df)
+              )
+    )
+) %>%
+  mutate(group = "df_hit")
+
+# Combine results into a single table
+final_stats <- bind_rows(stats_all, stats_target, stats_hit) %>%
+  mutate(mean_sd = paste0(round(mean, 2), " ± ", round(sd, 2))) %>%
+  select(group, variable, mean_sd) %>%
+  pivot_wider(names_from = variable, values_from = mean_sd)
+
+# Display df
+datatable(
+  final_stats,
+  options = list(
+    scrollX = TRUE,
+    scrollY = "400px"
+    )
+  )
+```
+
+## Dataset by subj
+
+```{r scores by subj}
+# Compute scores by subj
+by_subj <- df_all %>%
+  group_by(participant) %>%
+  summarise(
+    gender = first(gender),
+    study = first(study),
+    Hit = sum(hit),
+    cr = sum(cr),
+    www = sum(www),
+    wwhich = sum(wwhich),
+    mem = sum(mem),
+    n_target = sum(is_target == 1),
+    n_distractor = sum(is_target == 0),
+    pleasantness_t = mean(pleasantness[is_target == 1], na.rm = TRUE),
+    pleasantness_h = mean(pleasantness[hit == 1], na.rm = TRUE),
+    emotional_strength_t = mean(emotional_strength[is_target == 1], na.rm = TRUE),
+    emotional_strength_h = mean(emotional_strength[hit == 1], na.rm = TRUE),
+    intensity_t = mean(intensity[is_target == 1], na.rm = TRUE),
+    intensity_h = mean(intensity[hit == 1], na.rm = TRUE),
+    familiarity_t = mean(familiarity[is_target == 1], na.rm = TRUE),
+    familiarity_h = mean(familiarity[hit == 1], na.rm = TRUE),
+    nb_words_t = mean(nb_words[is_target == 1], na.rm = TRUE),
+    nb_words_h = mean(nb_words[hit == 1], na.rm = TRUE)
+  ) %>%
+  mutate(
+    hit_prop = (Hit) / (n_target),
+    www_prop = (www) / (n_target),
+    score_www = (www) / (Hit),
+    score_mem = (mem) / (Hit),
+    HR = (Hit + 0.5) / (n_target + 1),
+    FR = ((n_distractor - cr) + 0.5) / (n_distractor + 1),
+    d_prime = log((HR * (1 - FR)) / (FR * (1 - HR)))
+  )
+
+# Display df
+datatable(
+  by_subj,
+  options = list(
+    scrollX = TRUE,
+    scrollY = "400px"
+    )
+  )
+```
+
+```{r stats summary by_subj}
+# Define the columns to include
+selected_cols_all <- c(
+  'hit_prop',
+  'd_prime',
+  'score_www',
+  'score_mem',
+  'pleasantness_t',
+  'pleasantness_h',
+  'emotional_strength_t',
+  'emotional_strength_h',
+  'intensity_t',
+  'intensity_h',
+  'familiarity_t',
+  'familiarity_h',
+  "nb_words_t",
+  "nb_words_h"
+)
+
+# Compute statistics
+stats_by_subj <- summary_stats(by_subj, selected_cols_all) %>% mutate(group = "by_subj")
+
+# Display df
+datatable(
+  stats_by_subj,
+  options = list(
+    scrollX = TRUE,
+    scrollY = "400px"
+    )
+  )
+```
+
+## Condition selection
+
+```{r condition selection}
+# Select a condition
+condition <- "odor_recognition" # "odor_recognition" or "associative_memory"
+
+# Initialize variables according to condition
+if (condition == "odor_recognition") {
+  data <- df_target
+  data$outcome <- data$hit
+  by_subj$outcome <- by_subj$hit_prop
+  data$percept_dist <- data$avg_distance_target
+  data$jaccard_dist <- data$mean_lemma_jaccard_target
+  fillcolor <- "#5187EC"
+  chance <- 1/2
+}
+
+if (condition == "associative_memory") {
+  data <- df_hit
+  data$outcome <- data$mem
+  by_subj$outcome <- by_subj$score_mem
+  data$percept_dist <- data$avg_distance_hit
+  data$jaccard_dist <- data$mean_lemma_jaccard_hit
+  fillcolor <- "#5EACA3"
+  chance <- 1/3
+}
+```
+
+# Variable distribution {.tabset .tabset-fade}
+
+```{r custom theme for plots}
+linewidth = 1
+textsize = 25
+
+custom_theme <- function() {
+  theme_bw() +
+    theme(
+      panel.background = element_rect(fill = "white"),
+      panel.border = element_blank(),
+      aspect.ratio = 1/1,
+      axis.line = element_line(
+        color = "black",
+        linewidth = linewidth
+        ),
+      axis.text.x = element_text(
+        color = "black",
+        size = textsize
+        ),
+      axis.text.y = element_text(
+        color = "black", size = textsize),
+      axis.title = element_text(
+        color = "black",
+        size = textsize
+        ),
+      axis.ticks = element_line(
+        color = "black",
+        linewidth = linewidth
+        ),
+      axis.ticks.length = unit(10, "pt"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      legend.position = "none",
+      plot.background = element_rect(fill = "white")
+    )
+}
+```
+
+## Demographics
+
+```{r demographics distribution, fig.height=5, fig.width=15}
+# Study distribution
+study <- ggplot(
+  by_subj,
+  aes(x = factor(study))
+  ) +
+  geom_bar(
+    aes(
+      y = after_stat(count)),
+      fill = c("#d8bfbf", "#d4a6a6", "#a074b7", "#4d2654")
+    ) +
+  geom_text(
+    stat = 'count',
+    aes(label = after_stat(count)),
+    vjust = -0.2
+    ) +
+  labs(
+    x = "Study",
+    y = "Number of Participants"
+    ) +
+  custom_theme()
+
+# Gender distribution
+gender <- ggplot(by_subj, aes(x = gender)) +
+  geom_bar(
+    aes(y = after_stat(count)),
+    fill = c("#C08FA0", "#8FC0AE")
+    ) +
+  geom_text(
+    stat = 'count',
+    aes(label = after_stat(count)),
+    vjust = -0.2
+    ) +
+  labs(
+    x = "Gender",
+    y = "Number of Participants"
+    ) +
+  custom_theme()
+
+# Display plots
+ggarrange(study, gender,
+          nrow = 1,
+          ncol = 3
+)
+```
+
+## Memory variable
+
+```{r memory distribution, fig.height=5, fig.width=10}
+if (condition == "odor_recognition") {
+  x_label_prop <- "Hit proportion"
+  x_label_dist <- "Odor Recognition"
+  labels_outcome <- c("0" = "Miss", "1" = "Hit")
+  limits <- c(0,800)
+  breaks <- seq(0,800,by=200)
+} else if (condition == "associative_memory") {
+  x_label_prop <- "Correct retrieval proportion"
+  x_label_dist <- "Associative Memory"
+  labels_outcome <- c("0" = "Incorrect", "1" = "Correct")
+  limits <- c(0,600)
+  breaks <- seq(0,600,by=200)
+}
+
+# Outcome distribution (proportion)
+outcome_prop <- ggplot(by_subj, aes(x = outcome)) +
+  geom_histogram(
+    binwidth = 0.1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_continuous(
+    limits=c(-0.05,1.05),
+    breaks=seq(0,1,by=0.2)
+    ) +
+  scale_y_continuous(
+    limits=c(0,35),
+    breaks=seq(0,35,by=5)
+    ) +
+  labs(
+    x = x_label_prop,
+    y = "Number of Participants"
+    ) +
+  custom_theme()
+
+# Outcome distribution (bar plot)
+outcome_dist <- ggplot(data, aes(x = factor(outcome))) +
+  geom_bar(
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_discrete(
+    labels = labels_outcome
+    ) +
+  scale_y_continuous(
+    limits=limits,
+    breaks=breaks
+    ) +
+  labs(
+    x = x_label_dist,
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+# Display plots
+ggarrange(outcome_prop, outcome_dist,
+          ncol = 2
+)
+```
+
+## Perceptual variables
+
+```{r percptual variables distribution, fig.height=5, fig.width=20}
+# Pleasantness distribution
+pleasantness <- ggplot(data, aes(x = pleasantness)) +
+  geom_histogram(
+    binwidth = 1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_continuous(
+    limits=c(-5.5,5.5),
+    breaks=seq(-5,5, by=2.5)
+    ) +
+  scale_y_continuous(
+    limits=c(0,200),
+    breaks=seq(0,200,by=50)
+    ) +
+  labs(
+    x = "Pleasantness",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+# emotional_strength distribution
+emotional_strength <- ggplot(data, aes(x = emotional_strength)) +
+  geom_histogram(
+    binwidth = 1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_continuous(
+    limits=c(-0.5,5.5),
+    breaks=seq(0,5, by=1)
+    ) +
+  scale_y_continuous(
+    limits=c(0,300),
+    breaks=seq(0,300,by=100)
+    ) +
+  labs(
+    x = "Emotional strength",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+# Intensity episodic distribution
+intensity <- ggplot(data, aes(x = intensity)) +
+  geom_histogram(
+    binwidth = 1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_continuous(
+    limits=c(-0.5,10.5),
+    breaks=seq(0,10, by=2.5)
+    ) +
+  scale_y_continuous(
+    limits=c(0,200),
+    breaks=seq(0,200,by=50)
+    ) +
+  labs(
+    x = "Intensity",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+# Familiarity distribution
+familiarity <- ggplot(data, aes(x = familiarity)) +
+  geom_histogram(
+    binwidth = 1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_continuous(
+    limits=c(-0.5,10.5),
+    breaks=seq(0,10, by=2.5)
+    ) +
+  scale_y_continuous(
+    limits=c(0,200),
+    breaks=seq(0,200,by=50)
+    ) +
+  labs(
+    x = "Familiarity",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+# Display plots
+ggarrange(pleasantness, emotional_strength, intensity, familiarity,
+          nrow = 1,
+          ncol = 4
+)
+```
+
+## Perceptive distance
+
+```{r perceptive distance distribution, fig.height=5, fig.width=5}
+# Perceptive distance distribution
+dist <- ggplot(data, aes(x = percept_dist)) +
+  geom_histogram(
+    binwidth = 1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_x_continuous(
+    limits=c(-0.5,12.5),
+    breaks=seq(0,12,by=2)
+    ) +
+  labs(
+    x = "Perceptive Distance",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+dist
+```
+
+## Vocabulary richness
+
+```{r vocab richness distribution, fig.height=5, fig.width=10}
+# Word number distribution
+WC <- ggplot(data, aes(x = nb_words)) +
+  geom_histogram(
+    binwidth = 1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  labs(
+    x = "Number of words",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+# Display plots
+ggarrange(WC,
+          nrow = 1,
+          ncol = 1
+)
+```
+
+## Semantic Distance
+
+```{r lemma jaccard distribution, fig.height=5, fig.width=5}
+# Semantic distance distribution
+sem <- ggplot(data, aes(x = jaccard_dist)) +
+  geom_histogram(
+    binwidth = 0.1,
+    fill=fillcolor,
+    color="black",
+    aes(y = after_stat(count))
+    ) +
+  scale_y_continuous(
+  limits=c(0,600),
+  breaks=seq(0,600,by=200)
+  ) +
+  labs(
+    x = "Semantic Distance",
+    y = "Number of Trials"
+    ) +
+  custom_theme()
+
+sem
+```
+
+## Figure S1
+
+```{r fig papier, fig.height=10, fig.width=20}
+# Display plots
+ggarrange(outcome_dist, pleasantness, emotional_strength, intensity,
+          familiarity, dist, WC, sem,
+          nrow = 2,
+          ncol = 4
+)
+```
+
+# Perceptual scores {.tabset .tabset-fade}
+
+```{r perceptual variable selection}
+# List of variables
+variables <- c(
+  "pleasantness",
+  "emotional_strength",
+  "intensity",
+  "familiarity"
+  )
+```
+
+## Variability
+
+```{r plot rating variability, fig.height=20, fig.width=30}
+# Reshape dataframe to long format
+df_long <- df %>%
+  gather(
+    key = "Perceptual_variable",
+    value = "Rating",
+    pleasantness, intensity, familiarity, emotional_strength
+    )
+
+# Calculate averages
+mean_ratings <- df_long %>%
+  group_by(
+    odor_name,
+    Perceptual_variable
+    ) %>%
+  summarize(
+    mean_rating = mean(Rating, na.rm = TRUE)
+    )
+
+# Reorder odor_name based on the mean pleasantness rating
+mean_pleasantness <- mean_ratings %>%
+  filter(
+    Perceptual_variable == "pleasantness"
+    ) %>%
+  arrange(mean_rating)
+
+df_long <- df_long %>%
+  mutate(
+    odor_name = factor(
+      odor_name,
+      levels = mean_pleasantness$odor_name
+      )
+    )
+
+# Reorder Perceptual_variable
+df_long <- df_long %>%
+  mutate(Perceptual_variable = factor(
+    Perceptual_variable,
+    levels = c(
+      "pleasantness",
+      "emotional_strength",
+      "intensity",
+      "familiarity"
+      )
+    )
+    )
+
+mean_ratings <- mean_ratings %>%
+  mutate(
+    Perceptual_variable = factor(
+      Perceptual_variable,
+      levels = c(
+        "pleasantness",
+        "emotional_strength",
+        "intensity",
+        "familiarity"
+        )
+      )
+    )
+
+# Create graphics
+ggplot(df_long, aes(x = odor_name, y = Rating)) +
+  geom_line(
+    aes(group = participant),
+    alpha = 0.2,
+    color = "grey",
+    linewidth=0.5
+    ) + 
+  geom_point(
+    alpha = 0.2,
+    color = "grey",
+    size=0.5
+    ) +
+  geom_line(
+    data = mean_ratings,
+    aes(x = odor_name, y = mean_rating, group = 1),
+    color = "black",
+    size = 1
+    ) +
+  facet_grid(
+    ~ Perceptual_variable,
+    scales = "free_x"
+    ) +
+  custom_theme() +
+  labs(
+    x= NULL,
+    y = NULL
+    ) +
+  coord_flip()
+```
+
+## Correlations
+
+```{r average by odor}
+by_odor <- df %>%
+  group_by(odor_name) %>%
+  mutate(
+    familiarity_u = ifelse(!is.na(unpleasant), familiarity, NA),
+    familiarity_p = ifelse(!is.na(pleasant), familiarity, NA),
+    intensity_u = ifelse(!is.na(unpleasant), intensity, NA),
+    intensity_p = ifelse(!is.na(pleasant), intensity, NA)
+  ) %>%
+  summarize(
+    pleasantness = mean(pleasantness, na.rm = TRUE),
+    unpleasant = mean(unpleasant, na.rm = TRUE),
+    pleasant = mean(pleasant, na.rm = TRUE),
+    emotional_strength = mean(emotional_strength, na.rm = TRUE),
+    intensity = mean(intensity, na.rm = TRUE),
+    familiarity = mean(familiarity, na.rm = TRUE),
+    familiarity_u = mean(familiarity_u, na.rm = TRUE),
+    familiarity_p = mean(familiarity_p, na.rm = TRUE),
+    intensity_u = mean(intensity_u, na.rm = TRUE),
+    intensity_p = mean(intensity_p, na.rm = TRUE)
+  )
+```
+
+```{r corr plot var selection}
+# Define variable pairs
+combinations <- list(
+  list("intensity", "familiarity"),
+  list("unpleasant", "familiarity_u"),
+  list("pleasant", "familiarity_p"),
+  list("intensity", "emotional_strength"),
+  list("unpleasant", "intensity_u"),
+  list("pleasant", "intensity_p")
+)
+
+# Define axis limits
+axis_limits <- list(
+  "pleasantness" = c(-5, 5),
+  "unpleasant" = c(-5, 0),
+  "pleasant" = c(0, 5),
+  "emotional_strength" = c(0, 5),
+  "intensity" = c(0, 10),
+  "intensity_u" = c(0, 10),
+  "intensity_p" = c(0, 10),
+  "familiarity" = c(0, 10),
+  "familiarity_u" = c(0, 10),
+  "familiarity_p" = c(0, 10)
+)
+```
+
+```{r corr plot, fig.height=10, fig.width=15}
+# List to store raw p-values before correction
+p_values <- numeric(length(combinations))
+
+# List to store plots
+gg_list <- list()
+
+# Function to format axis labels
+format_axis_labels <- function(var) {
+  gsub("_u|_p", "", var)
+}
+
+# Function to capitalize words
+format_to_title_case <- function(var) {
+  tools::toTitleCase(var)
+}
+
+# Loop to compute correlations and store raw p-values
+for (i in seq_along(combinations)) {
+  combo <- combinations[[i]]
+  x_var <- combo[[1]]
+  y_var <- combo[[2]]
+
+  # Format axis labels
+  axis_labels <- list("emotional_strength" = "Emotional strength")
+  formatted_x_var <- axis_labels[[x_var]] %||% format_to_title_case(format_axis_labels(x_var))
+  formatted_y_var <- axis_labels[[y_var]] %||% format_to_title_case(format_axis_labels(y_var))
+
+  # Compute correlation test
+  cor_test <- cor.test(
+    by_odor[[x_var]],
+    by_odor[[y_var]],
+    use = "complete.obs"
+    )
+  correlation <- cor_test$estimate
+  p_values[i] <- cor_test$p.value
+
+  # Generate plot name
+  plot_name <- paste(
+    x_var,
+    y_var,
+    sep = "_vs_"
+    )
+
+  # Create the plot (p-value not yet corrected)
+  gg_list[[plot_name]] <- ggplot(
+    by_odor,
+    aes_string(x = x_var, y = y_var)
+    ) +
+    geom_point(
+      size = 2,
+      color = "black"
+      ) +
+    geom_smooth(
+      method = "lm",
+      se = FALSE,
+      color = "gray"
+      ) +
+    labs(
+      x = formatted_x_var,
+      y = formatted_y_var
+      ) +
+    scale_x_continuous(
+      limits = axis_limits[[x_var]]
+      ) +
+    scale_y_continuous(
+      limits = axis_limits[[y_var]]
+      ) +
+    custom_theme()
+}
+
+# Apply p-value correction
+p_values_corr <- p.adjust(p_values, method = "holm")
+
+# Update plots with corrected p-values
+for (i in seq_along(combinations)) {
+  combo <- combinations[[i]]
+  x_var <- combo[[1]]
+  y_var <- combo[[2]]
+  plot_name <- paste(
+    x_var,
+    y_var,
+    sep = "_vs_"
+    )
+
+  # Generate updated label with corrected p-value
+  correlation <- cor.test(
+    by_odor[[x_var]],
+    by_odor[[y_var]],
+    use = "complete.obs")$estimate
+  label <- paste(
+    "r =",
+    format(
+      round(correlation, 4),
+      nsmall = 4
+      ),
+    "\np =",
+    ifelse(
+      p_values_corr[i] < 1e-4,
+      formatC(
+        p_values_corr[i],
+        format = "e",
+        digits = 2
+        ),
+      format(
+        round(p_values_corr[i], 4),
+        nsmall = 4
+        )
+      )
+  )
+
+  # Add annotation with corrected p-value
+  gg_list[[plot_name]] <- gg_list[[plot_name]] +
+    annotate(
+      "text",
+      x = Inf,
+      y = -Inf,
+      label = label,
+      hjust = 1,
+      vjust = -0.5,
+      size = 6,
+      color = "black"
+      )
+}
+
+# Arrange plots
+ggarrange(
+  gg_list[["intensity_vs_familiarity"]],
+  gg_list[["unpleasant_vs_familiarity_u"]],
+  gg_list[["pleasant_vs_familiarity_p"]],
+  gg_list[["intensity_vs_emotional_strength"]],
+  gg_list[["unpleasant_vs_intensity_u"]],
+  gg_list[["pleasant_vs_intensity_p"]],
+  ncol = 3, nrow = 2
+)
+```
+
+# Gender x Memory scores {.tabset .tabset-fade}
+
+## Gender 
+
+```{r outcome x gender}
+# Define model formulas
+model_formulas <- list(
+  outcome ~ gender_encoded + (1 | participant) + (1 | study / odor_name),
+  outcome ~ gender_encoded + (1 | participant) + (1 | study) + (1 | odor_name),
+  outcome ~ gender_encoded + (1 | participant)
+)
+
+# Adjust models
+models <- lapply(model_formulas, function(formula) {
+  glmmTMB(
+    formula,
+    family = binomial,
+    data = data
+    )
+})
+
+# Naming models for easy identification
+names(models) <- paste0("model", 1:length(models))
+
+# Model comparison by AIC
+model_selection <- model.sel(models)
+best_model <- get.models(model_selection, 1)[[1]]
+
+# Results
+print(model_selection)
+summary(best_model)
+```
+
+## Chance level
+
+```{r memory prop x chance level}
+# Stats by subj
+by_subj %>%
+  group_by(gender) %>%
+  t_test(
+    outcome ~ 1,
+    mu = chance,
+    alternative = "greater"
+    ) %>%
+  adjust_pvalue(method = "holm") %>%
+  add_significance() %>%
+  kbl(caption = "By subj - One-tailed t-test, Holm correction") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+# Stats by trial
+data %>%
+  group_by(gender) %>%
+  t_test(
+    outcome ~ 1,
+    mu = chance,
+    alternative = "greater"
+    ) %>%
+  adjust_pvalue(method = "holm") %>%
+  add_significance() %>%
+  kbl(caption = "By trial - One-tailed t-test, Holm correction") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+# Gender x features
+
+```{r random structures}
+# Random structures to test
+random_structures <- list(
+  "(1 | participant) + (1 | study / odor_name)",
+  "(1 | participant) + (1 | study) + (1 | odor_name)",
+  "(1 | participant)"
+)
+```
+
+```{r gender x features}
+# List of variables and their respective models
+variables_lmer <- c(
+  "pleasantness",
+  "emotional_strength",
+  "intensity",
+  "familiarity",
+  "percept_dist",
+  "jaccard_dist"
+  )
+
+variables_glmmTMB_nbinom2 <- c("nb_words")
+
+# List to store the best models
+best_models <- list()
+
+# Function to fit models based on variable type
+fit_model <- function(variable, formula, data) {
+  if (variable %in% variables_lmer) {
+    return(tryCatch(
+      lmer(
+        formula,
+        data = data,
+        control = lmerControl(
+          check.conv.grad = .makeCC(
+            "ignore",
+            tol = 0.002
+            )
+          )
+        ),
+      error = function(e) NULL
+    )
+    )
+    
+  } else if (variable %in% variables_glmmTMB_nbinom2) {
+    return(tryCatch(
+      glmmTMB(
+        formula,
+        data = data,
+        family = nbinom2
+        ),
+      error = function(e) NULL
+    ))
+  }
+  return(NULL)
+}
+
+# Loop for each variable
+data <- data
+for (variable in c(
+  variables_lmer,
+  variables_glmmTMB_nbinom2
+  )
+  ) {
+  models <- list()
+  
+  # Adjust models for each random structure
+  for (random_effects in random_structures) {
+    if (variable == "pleasantness") {
+      formula <- as.formula(
+        paste0(
+          variable,
+          " + I(", variable, "^2) ~ gender_encoded + ",
+          random_effects
+          )
+        )
+    } else {
+      formula <- as.formula(
+        paste0(
+          variable,
+          " ~ gender_encoded + ",
+          random_effects
+          )
+        )
+    }
+    
+    model <- fit_model(
+      variable,
+      formula,
+      data
+      )
+    
+    if (!is.null(model)) {
+      if (
+        (variable %in% variables_lmer && !isSingular(model)
+         ) || variable %in% c(
+           variables_glmmTMB_nbinom2
+           )
+        ) {
+        warnings <- tryCatch(
+          summary(model)$optinfo$conv$lme4$messages,
+          error = function(e) NULL
+          )
+        if (is.null(warnings) || !grepl(
+          "boundary|Model failed to converge",
+          paste(warnings),
+          ignore.case = TRUE)
+          ) {
+          models[[random_effects]] <- model
+        }
+      }
+    }
+  }
+  
+  # Compare valid models by AIC
+  if (length(models) > 0) {
+    names(models) <- paste0(
+      "model",
+      1:length(models)
+      )
+    model_selection <- model.sel(models)
+    best_models[[variable]] <- get.models(
+      model_selection,
+      1
+      )[[1]]
+  } else {
+    best_models[[variable]] <- NULL
+  }
+}
+
+# Display summaries of the best models
+for (variable in c(
+  variables_lmer,
+  variables_glmmTMB_nbinom2)
+  ) {
+  cat("\nSummary for", variable, ":\n")
+  if (!is.null(best_models[[variable]])) {
+    print(summary(best_models[[variable]]))
+  } else {
+    cat("No valid model found for this variable.\n")
+  }
+  cat("\n\n--------------------------------------------------------------\n\n")
+}
+
+```
+
+# Memory score x features
+
+```{r include gender condition}
+# List of variables
+variables <- c(
+  "gender_encoded",
+  "pleasantness",
+  "emotional_strength",
+  "intensity",
+  "familiarity",
+  "percept_dist",
+  "nb_words",
+  "jaccard_dist"
+  )
+
+include_gender <- if (
+  condition == "odor_recognition"
+  ) {
+  "+ gender_encoded"
+} else if (
+  condition == "associative_memory" | "gender_encoded" %in% variables
+  ) {
+  ""
+} else {
+  ""
+}
+```
+
+```{r outcome x features, fig.height=10, fig.width=20}
+# Function to format p-value
+format_p_value <- function(p) {
+  if (p < 0.001) {
+    return(format(p, scientific = TRUE, digits = 2))
+  } else {
+    return(sprintf("%.3f", p))
+  }
+}
+
+# List for storing model results and plots
+model_list <- list()
+gg_list <- list()
+
+# Loop to fit models for each variable
+for (variable in variables) {
+  # Initialize a list to store models for the current variable
+  models_for_variable <- list()
+
+  # For 'pleasantness', fit only the quadratic model
+  if (variable == "pleasantness") {
+    formula_quadratic <- as.formula(
+      paste0(
+        "outcome ~ ",
+        variable,
+        " + I(", variable, "^2) ",
+        include_gender
+        )
+      )
+    for (random_structure in random_structures) {
+      formula_with_random <- paste(
+        deparse(formula_quadratic),
+        random_structure,
+        sep = " + "
+        )
+      model_quadratic <- glmmTMB(
+        as.formula(formula_with_random),
+        family = binomial,
+        data = data
+        )
+      models_for_variable[[paste0(
+        variable,
+        "_quadratic_",
+        random_structure
+        )
+        ]
+        ] <- model_quadratic
+    }
+  }
+
+  # For 'familiarity' fit both the linear and quadratic models
+  else if (variable == "familiarity") {
+    # Linear model
+    formula_linear <- as.formula(
+      paste0(
+        "outcome ~ ",
+        variable,
+        include_gender
+        )
+      )
+    for (random_structure in random_structures) {
+      formula_with_random <- paste(
+        deparse(formula_linear),
+        random_structure,
+        sep = " + "
+        )
+      model_linear <- glmmTMB(
+        as.formula(formula_with_random),
+        family = binomial,
+        data = data
+        )
+      models_for_variable[[paste0(
+        variable,
+        "_linear_",
+        random_structure
+        )
+        ]
+        ] <- model_linear
+    }
+
+    # Quadratic model
+    formula_quadratic <- as.formula(
+      paste0(
+        "outcome ~ ",
+        variable,
+        " + I(", variable, "^2) ",
+        include_gender
+        )
+      )
+    for (random_structure in random_structures) {
+      formula_with_random <- paste(
+        deparse(formula_quadratic),
+        random_structure,
+        sep = " + "
+        )
+      model_quadratic <- glmmTMB(
+        as.formula(formula_with_random),
+        family = binomial,
+        data = data
+        )
+      models_for_variable[[paste0(
+        variable,
+        "_quadratic_",
+        random_structure
+        )
+        ]
+        ] <- model_quadratic
+    }
+  }
+
+  # For other variables, fit only the linear model
+  else {
+    formula_linear <- as.formula(
+      paste0(
+        "outcome ~ ",
+        variable,
+        include_gender
+        )
+      )
+    for (random_structure in random_structures) {
+      formula_with_random <- paste(
+        deparse(formula_linear),
+        random_structure,
+        sep = " + "
+        )
+      model_linear <- glmmTMB(
+        as.formula(formula_with_random),
+        family = binomial,
+        data = data
+        )
+      models_for_variable[[paste0(
+        variable,
+        "_linear_",
+        random_structure
+        )
+        ]
+        ] <- model_linear
+    }
+  }
+
+  # Get the best model by AIC
+  best_model <- model.sel(
+    models_for_variable
+    )[which.min(
+      model.sel(
+        models_for_variable
+        )$AIC
+      ),
+      ]
+  best_model_name <- rownames(best_model)
+  best_model_fit <- models_for_variable[[best_model_name]]
+
+  # Extract z and p-values for the variable
+  summary_best_model <- summary(best_model_fit)
+
+  if (variable %in% c("pleasantness", "familiarity") && grepl("quadratic", best_model_name)) {
+    quadratic_term <- paste0("I(", variable, "^2)")
+    variable_coef <- summary_best_model$coefficients$cond[quadratic_term, ]
+  } else {
+    variable_coef <- summary_best_model$coefficients$cond[variable, ]
+  }
+  
+  z_value <- round(variable_coef["z value"], 3)
+  p_value <- as.numeric(format_p_value(variable_coef["Pr(>|z|)"]))
+
+  # Store the best model summary for the current variable
+  model_list[[variable]] <- summary_best_model
+
+  # Rename axis labels
+  variable_label <- switch(
+    variable,
+    "gender_encoded" = "Gender",
+    "nb_words" = "Number of words",
+    "percept_dist" = "Perceptive distance",
+    "jaccard_dist" = "Semantic distance",
+    "emotional_strength" = "Emotional strength",
+    paste0(
+      toupper(substr(variable, 1, 1)),
+      substr(variable, 2, nchar(variable)))
+    )
+
+  # Create the plot for the best model
+  if (variable == "gender_encoded") {
+    data$prediction_linear <- predict(
+      best_model_fit,
+      type = "response"
+      )
+    gg_hit <- ggplot(data,
+                     aes(
+                       x = factor(!!sym(variable)),
+                       y = prediction_linear * 100)
+                     ) +
+      geom_boxplot(
+        fill = fillcolor,
+        color = "black",
+        size = 1
+        ) +
+      stat_summary(
+        fun.data = mean_cl_normal,
+        geom = "errorbar",
+        width = 0.2,
+        color = "red",
+        linewidth = 1
+        ) +
+      stat_summary(
+        fun = mean,
+        geom = "point",
+        shape = 23,
+        size = 3,
+        fill = "red"
+        ) +
+      scale_x_discrete(
+        labels = if (variable == "gender_encoded") c("W", "M")
+        ) +
+      scale_y_continuous(
+        limits = c(0, 106)
+        ) +
+      labs(
+        x = variable_label,
+        y = "Predicted Probability \n to Succeed (%)"
+      ) +
+      custom_theme() +
+      annotate(
+        "text",
+        x = Inf,
+        y = -Inf,
+        label = paste0(
+          "z = ", round(z_value, 3),
+          "\np = ", round(p_value, 3)
+          ),
+        hjust = 1.1,
+        vjust = -0.5,
+        size = 7
+        )
+    
+    if (variable == "gender_encoded") {
+      gg_hit <- gg_hit + geom_hline(
+        yintercept = chance * 100,
+        linetype = "dashed",
+        color = "red",
+        linewidth = 1
+        )
+    }
+    
+  } else if (grepl("linear", best_model_name)) {
+    data$prediction_linear <- predict(
+      best_model_fit,
+      type = "response"
+      )
+    gg_hit <- ggplot(
+      data,
+      aes_string(
+        x = variable,
+        y = "prediction_linear * 100")
+      ) +
+      geom_point(size = 1) +
+      labs(
+        x = variable_label,
+        y = "Predicted Probability \n to Succeed (%)"
+      ) +
+      custom_theme() +
+      scale_x_continuous(
+        limits = if (variable == "percept_dist") c(0, 12) else NULL,
+        breaks = if (variable == "percept_dist") seq(0, 12, by = 2) else if (variable == "nb_words") seq(0, 12, by = 1) else waiver(),
+        labels = if (variable == "nb_words") function(x) ifelse(
+          x %% 2 == 0,
+          as.character(x),
+          "") else waiver(),
+        expand = expansion(mult = c(0.04, 0.08))
+                         ) +
+      scale_y_continuous(limits = c(0, 106)) +
+      geom_smooth(method = "glm",
+                  formula = y ~ x,
+                  color = fillcolor,
+                  se = FALSE,
+                  linewidth = 1) +
+      annotate(
+        "text",
+        x = Inf,
+        y = -Inf,
+        label = paste0(
+          "z = ", round(z_value, 3),
+          "\np = ", p_value),
+        hjust = 1.1,
+        vjust = -0.5,
+        size = 7
+        )
+    
+  } else if (grepl("quadratic", best_model_name)) {
+    data$prediction_quadratic <- predict(
+      best_model_fit,
+      type = "response"
+      )
+    gg_hit <- ggplot(
+      data,
+      aes_string(
+        x = variable,
+        y = "prediction_quadratic * 100")
+      ) +
+      geom_point(size = 1) +
+      labs(
+        x = variable_label,
+        y = "Predicted Probability \n to Succeed (%)"
+      ) +
+      custom_theme() +
+      scale_x_continuous(expand = expansion(mult = c(0.04, 0.08))) +
+      scale_y_continuous(
+        limits = c(0, 106)
+        ) +
+      geom_smooth(
+        method = "glm",
+        formula = y ~ poly(x, 2),
+        color = fillcolor,
+        se = FALSE,
+        linewidth = 1
+        ) +
+      annotate(
+        "text",
+        x = Inf,
+        y = -Inf,
+        label = paste0(
+          "z = ", round(z_value, 3),
+          "\np = ", p_value),
+        hjust = 1.1,
+        vjust = -0.5,
+        size = 7
+        )
+  }
+
+  # Store the plot in the gg_list
+  gg_list[[variable]] <- gg_hit
+}
+
+# Display only the best model for each variable
+for (variable in variables) {
+  cat("\nSummary for", variable, ":\n")
+  if (!is.null(model_list[[variable]])) {
+    print(model_list[[variable]])
+  } else {
+    cat("No valid model found for this variable.\n")
+  }
+  cat("\n\n--------------------------------------------------------------\n\n")
+}
+
+# Combine and display all plots
+ggarrange(
+  plotlist = gg_list,
+  nrow = 2, ncol = 4
+)
+```
