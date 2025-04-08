@@ -1,6 +1,6 @@
 # Open Science Project: Memorable Scents
 
-This repository contains code and analysis for the study presented in the scientific paper untitled "What  Makes a Scent Memorable? Machine Learning Insights into Odor-Evoked Episodic Memory"
+This repository contains code and analysis for the study presented in the scientific paper untitled "What Makes a Scent Trigger a Memory? A Cognitive Decomposition of Odor-Evoked Retrieval"
 
 ## 📁 Repository Structure
 
