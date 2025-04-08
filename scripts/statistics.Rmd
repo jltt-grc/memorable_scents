@@ -670,9 +670,9 @@ variables <- c(
 
 ## Variability
 
-```{r plot rating variability, fig.height=20, fig.width=30}
+```{r plot target rating variability, fig.height=15, fig.width=30}
 # Reshape dataframe to long format
-df_long <- df %>%
+df_long <- df_target %>%
   gather(
     key = "Perceptual_variable",
     value = "Rating",
@@ -730,18 +730,20 @@ mean_ratings <- mean_ratings %>%
       )
     )
 
+# Create a custom labeller for Perceptual_variable
+custom_labeller <- c(
+  pleasantness = "Pleasantness",
+  emotional_strength = "Emotional Strength",
+  intensity = "Intensity",
+  familiarity = "Familiarity"
+)
+
 # Create graphics
 ggplot(df_long, aes(x = odor_name, y = Rating)) +
-  geom_line(
-    aes(group = participant),
-    alpha = 0.2,
-    color = "grey",
-    linewidth=0.5
-    ) + 
   geom_point(
     alpha = 0.2,
-    color = "grey",
-    size=0.5
+    color = "gray",
+    size=4
     ) +
   geom_line(
     data = mean_ratings,
@@ -751,14 +753,73 @@ ggplot(df_long, aes(x = odor_name, y = Rating)) +
     ) +
   facet_grid(
     ~ Perceptual_variable,
-    scales = "free_x"
+    scales = "free_x",
+    labeller = labeller(Perceptual_variable = custom_labeller)
     ) +
   custom_theme() +
   labs(
     x= NULL,
     y = NULL
     ) +
-  coord_flip()
+  coord_flip() +
+  theme(
+    strip.text = element_text(size = 22),
+    aspect.ratio = 1.2
+  )
+```
+
+```{r variability}
+# Theoretical SD
+max_sd <- c(
+  pleasantness = 5,
+  emotional_strength = 2.5,
+  intensity = 5,
+  familiarity = 5
+)
+
+# SD per odor for targets
+sd_target <- df_target %>%
+  group_by(odor_name) %>%
+  summarise(
+    pleasantness = sd(pleasantness, na.rm = TRUE),
+    emotional_strength = sd(emotional_strength, na.rm = TRUE),
+    intensity = sd(intensity, na.rm = TRUE),
+    familiarity = sd(familiarity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# SD averages
+mean_sd_target <- colMeans(sd_target[, -1], na.rm = TRUE)
+
+# SD per odor for hits
+sd_hit <- df_hit %>%
+  group_by(odor_name) %>%
+  summarise(
+    pleasantness = sd(pleasantness, na.rm = TRUE),
+    emotional_strength = sd(emotional_strength, na.rm = TRUE),
+    intensity = sd(intensity, na.rm = TRUE),
+    familiarity = sd(familiarity, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+mean_sd_hit <- colMeans(sd_hit[, -1], na.rm = TRUE)
+
+# Create the final table
+final_summary <- tibble(
+  variable = names(max_sd),
+  theoretical_sd = unname(max_sd),
+  target_sd = mean_sd_target,
+  ratio_target = (target_sd / theoretical_sd) * 100,
+  hit_sd = mean_sd_hit,
+  ratio_hit = (hit_sd / theoretical_sd) * 100
+)
+
+# Display the final table
+datatable(
+  final_summary %>% mutate(across(where(is.numeric), round, 2)),
+  caption = "Means of standard deviations by variable and ratios (vs. theoretical SD)",
+  options = list(dom = 't')
+)
 ```
 
 ## Correlations
