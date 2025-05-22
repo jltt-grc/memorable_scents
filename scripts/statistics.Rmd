@@ -1017,7 +1017,6 @@ ggarrange(
 ```{r outcome x gender}
 # Define model formulas
 model_formulas <- list(
-  outcome ~ gender_encoded + (1 | participant) + (1 | study / odor_name),
   outcome ~ gender_encoded + (1 | participant) + (1 | study) + (1 | odor_name),
   outcome ~ gender_encoded + (1 | participant)
 )
@@ -1078,7 +1077,6 @@ data %>%
 ```{r random structures}
 # Random structures to test
 random_structures <- list(
-  "(1 | participant) + (1 | study / odor_name)",
   "(1 | participant) + (1 | study) + (1 | odor_name)",
   "(1 | participant)"
 )
