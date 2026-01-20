@@ -70,7 +70,11 @@ jupyter notebook
 ## 📝 Citation
 
 If you use this work in your research, please cite the following paper:
-**TO BE COMPLETED**
+Greco-Vuilloud J, Ruby P, Plailly J, Saive A-L. 2026. What makes a scent trigger a memory? A cognitive decomposition of odor-evoked retrieval. iScience. 29(1) 2026
+https://www.cell.com/iscience/abstract/S2589-0042(25)02728-2. https://doi.org/10.1016/j.isci.2025.114467
+
+<img width="468" height="96" alt="image" src="https://github.com/user-attachments/assets/9b64837d-87cc-4d43-a416-cbc2c8401b53" />
+
 
 ---
 
