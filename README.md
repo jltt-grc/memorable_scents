@@ -64,7 +64,7 @@ jupyter notebook
 
 ## 📄 License
 
-- Code: MIT License.
+- Code: BSD-3-Clause license.
 - Dataset: CC-BY 4.0 International.
 
 ## 📝 Citation
